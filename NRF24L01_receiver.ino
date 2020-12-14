@@ -55,20 +55,25 @@ EnhancedServo steeringServo;
 // STETUP LIGHTS
 #define ALARM_LIGHT_0_PIN A0
 #define ALARM_LIGHT_1_PIN A1
+#define PROTOCOL_CHANNEL_ALARM_LIGHT 10 // rc channel for alarm light.
 unsigned long alarmTimer0=0;
 //unsigned long alarmTimer1=0;
 #define ALARM_BLINK_INTERVAL 150
 unsigned char alarmBlinkStatus=0;
 
-#define BREAK_LIGHTS_PIN 5
+#define PROTOCOL_CHANNEL_LIGHTS 6
+#define HEADLIGHT_PIN A2
 #define REAR_LIGHTS_PIN 5
 
+#define BREAK_LIGHTS_PIN 5
+bool isDrivingLightOn=false;
+#define REAR_LIGHT_PWM_LUMINANCE 96 // pwm luminance for rear light
+#define BREAK_LIGHT_PWM_LUMINANCE 255 // pwm luminance for rear light
 
 
-#define HEADLIGHT_PIN A2
 
 
-// confiure braking behavior
+// configure braking behavior
 #define MOTOR_1_ENABLE_BREAK true
 #define MOTOR_1_SOFTBRAKE_TRIGGER 10
 #define MOTOR_1_HARD_BRAKE_TRIGGER 100
@@ -88,6 +93,9 @@ bool isPacketProcessed = false;
 
 unsigned long lastMicros=0;
 const byte address[6] = "00001";
+
+byte protocolValuesCurrent[PACKET_LENGTH];
+
 void setup()
 {
 
@@ -168,9 +176,17 @@ void setup()
 	digitalWrite(HEADLIGHT_PIN, true);
 	digitalWrite(ALARM_LIGHT_0_PIN, true);
 	digitalWrite(ALARM_LIGHT_1_PIN, true);
-	digitalWrite(REAR_LIGHTS_PIN, true);
-	analogWrite(REAR_LIGHTS_PIN, 255);
+	analogWrite (REAR_LIGHTS_PIN, REAR_LIGHT_PWM_LUMINANCE);
+
+//	analogWrite(REAR_LIGHTS_PIN, 64);
+//	delay (1000);
+//	analogWrite(REAR_LIGHTS_PIN, 128);
+//	delay(1000);
+//	analogWrite(REAR_LIGHTS_PIN, 196);
+//	delay(1000);
+//	analogWrite(REAR_LIGHTS_PIN, 255);
 	Serial.println(F("setup done"));
+	delay (500);
 
 }
 
@@ -223,13 +239,122 @@ void doPacketTimeout()
 }
 
 
+
+/**
+ * processes the front and rear light.
+ */
+void drivingLights( )
+{
+
+	if (protocolValuesCurrent[PROTOCOL_CHANNEL_LIGHTS])
+	{
+		isDrivingLightOn=true;
+	}
+	else
+	{
+		isDrivingLightOn=false;
+	}
+
+	// process headlights
+	digitalWrite(HEADLIGHT_PIN, isDrivingLightOn);
+
+	// process rear ligths and breaking lights.
+	if (BREAK_LIGHTS_PIN == REAR_LIGHTS_PIN)
+	{
+		// we use same LEDs for break and rear lights. Emulation by luminance via pwm.
+		if (motor.isBreakingLightsOn())
+		{
+			// enable break light pin to full luminance (digitalWrite)
+			analogWrite(BREAK_LIGHTS_PIN, BREAK_LIGHT_PWM_LUMINANCE);
+		}
+		else
+		{
+			// break light is disabled
+			if (isDrivingLightOn)
+			{
+				// driving light is on, so enable led ad limited luminance
+				analogWrite(REAR_LIGHTS_PIN, REAR_LIGHT_PWM_LUMINANCE);
+			}
+			else
+			{
+				// driving light is disabled -> disable led
+				digitalWrite(REAR_LIGHTS_PIN, false);
+			}
+		}
+
+	}
+	else
+	{
+		// different LEDs for rear lights and break lights -> set status of leds via digital write at full luminance
+		digitalWrite(REAR_LIGHTS_PIN, isDrivingLightOn);
+		digitalWrite(BREAK_LIGHTS_PIN, motor.isBreakingLightsOn());
+	}
+
+
+
+
+//	enableRearLights();
+//
+//	{
+//		digitalWrite(HEADLIGHT_PIN, false);
+//		digitalWrite(REAR_LIGHTS_PIN, false);
+//		isDrivingLightOn=false;
+//	}
+}
+//
+//void breakLights()
+//{
+//	if (motor.isBreakingLightsOn())
+//	{
+//		analogWrite(BREAK_LIGHTS_PIN,255);
+//	}
+//	else
+//	{
+//		if (BREAK_LIGHTS_PIN == REAR_LIGHTS_PIN)
+//		{
+//			if (isDrivingLightOn)
+//			{
+//				enableRearLights();
+//			}
+//			else
+//			{
+//				digitalWrite(REAR_LIGHTS_PIN, false);
+//			}
+//		}
+//
+//		digitalWrite(BREAK_LIGHTS_PIN, false);
+//	}
+//}
+
+
+/**
+ * enables and disables processes the alarm lights
+ */
+void alarmLights( )
+{
+	Serial.println("in alarmLights)");
+	if (protocolValuesCurrent[PROTOCOL_CHANNEL_ALARM_LIGHT])
+	{
+		// enable the alarm light
+		runAlarmLightBlink();
+	}
+	else
+	{
+		// disable the alarm lights
+		digitalWrite(ALARM_LIGHT_0_PIN, false);
+		digitalWrite(ALARM_LIGHT_1_PIN, false);
+	}
+
+}
+
+
 void loop()
 {
 
 	unsigned long currentMillis = millis();
 
 	// declare here to only use inside this loop iteration
-	byte protocolValuesCurrent[PACKET_LENGTH];
+
 	if (radio.available())
 	{
 		// save packet to
@@ -281,6 +406,12 @@ void loop()
 			Serial.print(F(" M="));
 			Serial.print(protocolValuesCurrent[PROTOCOL_CHANNEL_MOTOR_1]);
 			Serial.print(F("\n"));
+			for (int a=0; a< sizeof protocolValuesCurrent; a++)
+			{
+				Serial.print(protocolValuesCurrent[a]);
+				Serial.print(F(" "));
+			}
+			Serial.print(F("\n"));
 
 			// update protocolValuesLast with values of protocolValuesCurrent. Maybe we need it later
 			for (unsigned char i=0; i< PACKET_LENGTH; i++)
@@ -299,7 +430,10 @@ void loop()
 		}
 
 	}
-	// run alarmLight
-	runAlarmLightBlink();
+	alarmLights();
+	drivingLights();
+
+
+
 
 }
